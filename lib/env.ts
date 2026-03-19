@@ -1,6 +1,7 @@
 function readEnv(name: string) {
   const value = process.env[name];
-  return value && value.length > 0 ? value : undefined;
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
 export const env = {

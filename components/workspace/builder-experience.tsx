@@ -75,7 +75,7 @@ const initialGenerated: GeneratedBriefIntelligence = {
       "Clear product visibility in use"
     ],
     usageRights: initialForm.usageRights,
-    finalSections
+    finalSections: finalBriefSections
   }
 };
 

@@ -142,60 +142,95 @@ Requirements:
 - If a field is missing, call that out constructively.
 `.trim();
 
-  const response = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.openrouterApiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://brieflabs.vercel.app",
-      "X-Title": "Lumia Brief"
-    },
-    body: JSON.stringify({
-      model: env.openrouterModel,
-      response_format: {
-        type: "json_object"
+  const controller = new AbortController();
+  let timeoutId: NodeJS.Timeout | undefined;
+
+  try {
+    const fetchPromise = fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.openrouterApiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://brieflabs.vercel.app",
+        "X-Title": "Lumia Brief"
       },
-      messages: [
-        {
-          role: "system",
-          content:
-            "You generate creator-brief strategy output for brands. Return clean JSON only."
+      body: JSON.stringify({
+        model: env.openrouterModel,
+        max_tokens: 1200,
+        temperature: 0.7,
+        response_format: {
+          type: "json_object"
         },
-        {
-          role: "user",
-          content: prompt
-        }
-      ]
-    })
-  });
+        messages: [
+          {
+            role: "system",
+            content:
+              "You generate creator-brief strategy output for brands. Return clean JSON only."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ]
+      }),
+      signal: controller.signal
+    });
 
-  const payload = (await response.json()) as OpenRouterResponse;
+    void fetchPromise.catch(() => undefined);
 
-  if (!response.ok) {
-    throw new Error(payload.error?.message ?? "OpenRouter request failed.");
-  }
+    const timeoutPromise = new Promise<Response>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        controller.abort();
+        reject(
+          new Error(
+            "OpenRouter free is taking too long to respond right now. Please retry in a moment."
+          )
+        );
+      }, 25000);
+    });
 
-  const content = toContentString(payload.choices?.[0]?.message?.content);
-  const parsed = extractJson(content) as GeneratedBriefIntelligence;
+    const response = await Promise.race([fetchPromise, timeoutPromise]);
 
-  return {
-    summary: parsed.summary,
-    recommendations: normalizeList(parsed.recommendations, []),
-    hooks: normalizeList(parsed.hooks, []),
-    ideas: normalizeIdeas(parsed.ideas),
-    interpretationInsights: normalizeInsights(parsed.interpretationInsights),
-    scoreBreakdown: normalizeScoreBreakdown(parsed.scoreBreakdown),
-    finalBrief: {
-      title: parsed.finalBrief?.title ?? fields.campaignName || "Generated brief",
-      brand: parsed.finalBrief?.brand ?? fields.brandName || "Brand",
-      readiness: Math.max(
-        0,
-        Math.min(100, Number(parsed.finalBrief?.readiness) || 0)
-      ),
-      summary: parsed.finalBrief?.summary ?? parsed.summary,
-      deliverables: normalizeList(parsed.finalBrief?.deliverables, []),
-      usageRights: parsed.finalBrief?.usageRights ?? fields.usageRights,
-      finalSections: normalizeList(parsed.finalBrief?.finalSections, [])
+    const payload = (await response.json()) as OpenRouterResponse;
+
+    if (!response.ok) {
+      throw new Error(payload.error?.message ?? "OpenRouter request failed.");
     }
-  };
+
+    const content = toContentString(payload.choices?.[0]?.message?.content);
+    const parsed = extractJson(content) as GeneratedBriefIntelligence;
+
+    return {
+      summary: parsed.summary,
+      recommendations: normalizeList(parsed.recommendations, []),
+      hooks: normalizeList(parsed.hooks, []),
+      ideas: normalizeIdeas(parsed.ideas),
+      interpretationInsights: normalizeInsights(parsed.interpretationInsights),
+      scoreBreakdown: normalizeScoreBreakdown(parsed.scoreBreakdown),
+      finalBrief: {
+        title: parsed.finalBrief?.title ?? fields.campaignName ?? "Generated brief",
+        brand: parsed.finalBrief?.brand ?? fields.brandName ?? "Brand",
+        readiness: Math.max(
+          0,
+          Math.min(100, Number(parsed.finalBrief?.readiness) || 0)
+        ),
+        summary: parsed.finalBrief?.summary ?? parsed.summary,
+        deliverables: normalizeList(parsed.finalBrief?.deliverables, []),
+        usageRights: parsed.finalBrief?.usageRights ?? fields.usageRights,
+        finalSections: normalizeList(parsed.finalBrief?.finalSections, [])
+      }
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(
+        "OpenRouter free is taking too long to respond right now. Please retry in a moment."
+      );
+    }
+
+    throw error;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
